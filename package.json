@@ -1,0 +1,17 @@
+{
+  "name": "bitcoin-transaction-creator",
+  "version": "1.0.0",
+  "main": "build-html.js",
+  "scripts": {
+    "build-html": "node build-html.js"
+  },
+  "author": "matrm <matrm@gmx.com>",
+  "license": "Open BSV",
+  "dependencies": {
+    "node-fetch": "^2.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/matrm/bitcoin-transaction-creator.git"
+  }
+}
