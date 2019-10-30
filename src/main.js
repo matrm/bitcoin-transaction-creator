@@ -33,6 +33,80 @@ async function checkIfConnectedToInternet() {
 	return numErrors < urls.length;
 }
 
+function stringToTransaction(str) {
+	return (str.startsWith('{') && str.endsWith('}')) ? new bsv.Transaction(JSON.parse(str)) : new bsv.Transaction(str);
+}
+
+function getTransactionInfoObject(tx) {
+	assert(tx instanceof bsv.Transaction);
+
+	console.log('Transaction info:');
+
+	console.log(`${tx.inputs.length} inputs:`);
+	const inputAddressAmounts = {};// Sum of input amounts with each address.
+	const nonStandardInputScriptCount = 0;
+	for (const input of tx.inputs) {
+		// Signed transactions have different properties than unsigned.
+		const script = input.output ? input.output.script : input.script;
+		assert(script instanceof bsv.Script);
+		const address = script.toAddress().toString();
+		const amount = input.output ? input.output.satoshis : null;// Change to undefined instead of null if this address shouldn't be a property when amount is unknown.
+		if (!inputAddressAmounts[address]) {
+			inputAddressAmounts[address] = amount;
+		} else {
+			inputAddressAmounts[address] += amount;
+		}
+		if (!script.isStandard()) {
+			nonStandardInputScriptCount++;
+		}
+		console.log(`  ${amount || 'Unknown amount'} input from address ${address}`);
+	}
+
+	console.log(`${tx.outputs.length} outputs:`);
+	const outputAddressAmounts = {};// Sum of output amounts with each address.
+	const nonStandardOutputScriptCount = 0;
+	for (const output of tx.outputs) {
+		assert(output.script instanceof bsv.Script);
+		//assert(output.script.isPublicKeyHashOut());// This assertion can be used if no transactions created elsewhere are used.
+		const address = output.script.toAddress().toString();
+		const amount = output.satoshis;
+		if (!outputAddressAmounts[address]) {
+			outputAddressAmounts[address] = amount;
+		} else {
+			outputAddressAmounts[address] += amount;
+		}
+		if (!output.script.isStandard()) {
+			nonStandardOutputScriptCount++;
+		}
+		console.log(`  ${amount} to address ${address}`);
+	}
+
+	const warnings = [];
+	if (nonStandardInputScriptCount) {
+		warnings.push(`${nonStandardInputScriptCount} non standard inputs`);
+	}
+	if (nonStandardOutputScriptCount) {
+		warnings.push(`${nonStandardOutputScriptCount} non standard outputs`);
+	}
+	if (Object.keys(outputAddressAmounts).length != tx.outputs.length) {
+		warnings.push('This transaction has multiple outputs with the same address');
+	}
+	const outputAddressInInputAddresses = Object.keys(outputAddressAmounts).reduce((matchFound, outputAddress) => matchFound || outputAddress in inputAddressAmounts, false);
+	if (outputAddressInInputAddresses) {
+		warnings.push('Addresses are being reused');
+	}
+	if (warnings.length) {
+		console.log('Transaction warnings:');
+		console.log(warnings);
+	}
+
+	return {
+		inputAddressAmounts,
+		outputAddressAmounts,
+		warnings
+	};
+}
+
 async function fetchAddressesUTXOs(addresses) {
 	assert(Array.isArray(addresses));
 	assert(addresses.length);
@@ -566,7 +640,7 @@ PrivateKey4`,
 				if (!privateKeysTextArea.value) {
 					throw new Error('Private keys text area is empty.');
 				}
-				const tx = new bsv.Transaction(JSON.parse(unsignedTransactionTextArea.value));
+				const tx = stringToTransaction(unsignedTransactionTextArea.value);
 				const privateKeys = privateKeysTextAreaValueToArrayOfPrivateKeys(privateKeysTextArea.value);
 				tx.sign(privateKeys);
 				const txSerialized = tx.serialize();
@@ -641,6 +715,116 @@ PrivateKey4`,
 	});
 }
 
+function renderTransactionViewer() {
+	clearBody();
+
+	const container = createContainer();
+
+	container.appendChild(createElementWithInnerText('h1', 'View Transaction'));
+
+	container.appendChild(createButton({
+		value: 'Back',
+		onclick: renderDefault
+	}));
+	container.appendChild(createButton({
+		value: 'Reset',
+		onclick: renderTransactionViewer
+	}));
+
+	const transactionTextArea = createTextArea({
+		placeholder: 'Signed or unsigned transaction.',
+		rows: 18,
+		cols: 80
+	});
+
+	const viewTransactionTextArea = createTextArea({
+		placeholder: 'Info about the transaction will be output here.',
+		rows: 18,
+		cols: 80,
+		readOnly: true
+	});
+
+	const copyViewTransactionTextAreaButton = createCopyToClipboardFromTextAreaButton(viewTransactionTextArea);
+
+	const simpleTransactionViewButton = createButton({
+		value: 'Simple Transaction View',
+		onclick: () => {
+			try {
+				if (!transactionTextArea.value) {
+					throw new Error('Transaction text area is empty.');
+				}
+				const tx = stringToTransaction(transactionTextArea.value);
+				viewTransactionTextArea.value = stringifyWithTabs(getTransactionInfoObject(tx));
+				updateButtonVisibilityFromTextArea(copyViewTransactionTextAreaButton, viewTransactionTextArea);
+			} catch (error) {
+				console.log(error);
+				alert(`Unable to view transaction: ${error.message}`);
+			}
+		}
+	});
+
+	const advancedTransactionViewButton = createButton({
+		value: 'Advanced Transaction View',
+		onclick: () => {
+			try {
+				if (!transactionTextArea.value) {
+					throw new Error('Transaction text area is empty.');
+				}
+				const tx = stringToTransaction(transactionTextArea.value);
+				viewTransactionTextArea.value = stringifyWithTabs(tx.toObject());
+				updateButtonVisibilityFromTextArea(copyViewTransactionTextAreaButton, viewTransactionTextArea);
+			} catch (error) {
+				console.log(error);
+				alert(`Unable to view transaction: ${error.message}`);
+			}
+		}
+	});
+
+	const table = document.createElement('table');
+	table.classList.add('standardMargin');
+
+	// First row. User inputs.
+	table.appendChild((() => {
+		const tr = document.createElement('tr');
+
+		// Transaction user input.
+		tr.appendChild((() => {
+			const td = document.createElement('td');
+
+			td.appendChild(createElementWithInnerText('h2', 'Transaction:'));
+			td.appendChild(transactionTextArea);
+
+			return td;
+		})());
+
+		return tr;
+	})());
+
+	// Second row. View transaction output.
+	table.appendChild((() => {
+		const tr = document.createElement('tr');
+
+		tr.appendChild((() => {
+			const td = document.createElement('td');
+
+			td.appendChild(simpleTransactionViewButton);
+			td.appendChild(advancedTransactionViewButton);
+			addElementLineBreak(td);
+			td.appendChild(viewTransactionTextArea);
+			addElementLineBreak(td);
+			td.appendChild(copyViewTransactionTextAreaButton);
+
+			return td;
+		})());
+
+		return tr;
+	})());
+
+	container.appendChild(table);
+
+	document.body.appendChild(container);
+}
+
 function renderDefault() {
 	clearBody();
 
@@ -656,6 +840,11 @@ function renderDefault() {
 	container.appendChild(createButton({
 		value: 'Sign Unsigned Transaction',
 		onclick: renderTransactionSigner
+	}));
+
+	container.appendChild(createButton({
+		value: 'View Transaction',
+		onclick: renderTransactionViewer
 	}));
 
 	document.body.appendChild(container);
