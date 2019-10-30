@@ -20,7 +20,7 @@ const bsvLibVersion = '1.0.0';
 // This hash will need to be updated after changing bsvLibVersion.
 const bsvLibTextExpectedHash = '985c0591f5a2e509e9978b7618a5b2d0cb592f7e5dfe16847b1e8a17d3f8d5f0';
 // This hash will need to be updated when making changes to any parts of the HTML.
-const htmlExpectedHash = 'a6ef7e4ee4a91c9eb102b308a80581a000e7c8c53c214a993d6b962347d42738';
+const htmlExpectedHash = '840d4fa71813065c2fc05357c9965c61558c6ba3f352666754c40775f657efe8';
 
 const libSaveFolder = 'lib';
 // Create lib save folder if it doesn't exist yet.
