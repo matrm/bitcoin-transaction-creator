@@ -18,7 +18,7 @@ Expected hash: ${expectedHash}`);
 
 const bsvLibVersion = '1.0.0';
 // This hash will need to be updated after changing bsvLibVersion.
-const bsvLibTextExpectedHash = '985c0591f5a2e509e9978b7618a5b2d0cb592f7e5dfe16847b1e8a17d3f8d5f0';
+const bsvLibExpectedHash = '985c0591f5a2e509e9978b7618a5b2d0cb592f7e5dfe16847b1e8a17d3f8d5f0';
 // This hash will need to be updated when making changes to any parts of the HTML.
 const htmlExpectedHash = '840d4fa71813065c2fc05357c9965c61558c6ba3f352666754c40775f657efe8';
 
@@ -67,7 +67,7 @@ async function start() {
 		}
 		const buffer = await response.buffer();
 		try {
-			verifyHash(sha256(buffer), bsvLibTextExpectedHash, 'Downloaded BSV library unexpected hash.');
+			verifyHash(sha256(buffer), bsvLibExpectedHash, 'Downloaded BSV library unexpected hash.');
 		} catch (error) {
 			fs.writeFileSync(invalidBsvLibFilePath, buffer);
 			console.log(`Saved to "${invalidBsvLibFilePath}".`);
@@ -76,9 +76,9 @@ async function start() {
 		fs.writeFileSync(bsvLibFilePath, buffer);
 		console.log(`Saved to "${bsvLibFilePath}".`);
 	}
-	const bsvLibText = fs.readFileSync(bsvLibFilePath, encoding);
-	assert(bsvLibText.substr(4, 3) === 'bsv');
-	assert(bsvLibText[7] === '=');
+	const bsvLib = fs.readFileSync(bsvLibFilePath, encoding);
+	assert(bsvLib.substr(4, 3) === 'bsv');
+	assert(bsvLib[7] === '=');
 
 	assert(html.includes('<script>'));
 	assert(html.includes('</script>'));
@@ -92,7 +92,7 @@ async function start() {
 
 	html = html.replace('/* Replace with javascript */',
 `
-${bsvLibText}
+${bsvLib}
 
 ${mainJs}
 `);
@@ -103,7 +103,7 @@ ${mainCss}
 `);
 
 	// Verify bsv dependency.
-	verifyHash(sha256(bsvLibText), bsvLibTextExpectedHash, 'BSV library unexpected hash.');
+	verifyHash(sha256(bsvLib), bsvLibExpectedHash, 'BSV library unexpected hash.');
 	// Verify HTML.
 	verifyHash(sha256(html), htmlExpectedHash, 'HTML unexpected hash.');
 
