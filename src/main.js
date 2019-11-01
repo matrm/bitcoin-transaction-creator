@@ -40,9 +40,6 @@ function stringToTransaction(str) {
 function getTransactionInfoObject(tx) {
 	assert(tx instanceof bsv.Transaction);
 
-	console.log('Transaction info:');
-
-	console.log(`${tx.inputs.length} inputs:`);
 	const inputAddressAmounts = {};// Sum of input amounts with each address.
 	const nonStandardInputScriptCount = 0;
 	for (const input of tx.inputs) {
@@ -59,10 +56,8 @@ function getTransactionInfoObject(tx) {
 		if (!script.isStandard()) {
 			nonStandardInputScriptCount++;
 		}
-		console.log(`  ${amount || 'Unknown amount'} input from address ${address}`);
 	}
 
-	console.log(`${tx.outputs.length} outputs:`);
 	const outputAddressAmounts = {};// Sum of output amounts with each address.
 	const nonStandardOutputScriptCount = 0;
 	for (const output of tx.outputs) {
@@ -78,10 +73,15 @@ function getTransactionInfoObject(tx) {
 		if (!output.script.isStandard()) {
 			nonStandardOutputScriptCount++;
 		}
-		console.log(`  ${amount} to address ${address}`);
 	}
 
 	const warnings = [];
+	{
+		const lockTime = tx.getLockTime();
+		if (lockTime) {
+			warnings.push(`Locked until ${lockTime instanceof Date ? lockTime.toISOString() : 'block #' + lockTime}`);
+		}
+	}
 	if (nonStandardInputScriptCount) {
 		warnings.push(`${nonStandardInputScriptCount} non standard inputs`);
 	}
@@ -89,15 +89,11 @@ function getTransactionInfoObject(tx) {
 		warnings.push(`${nonStandardOutputScriptCount} non standard outputs`);
 	}
 	if (Object.keys(outputAddressAmounts).length != tx.outputs.length) {
-		warnings.push('This transaction has multiple outputs with the same address');
+		warnings.push('Multiple outputs with the same address');
 	}
 	const outputAddressInInputAddresses = Object.keys(outputAddressAmounts).reduce((matchFound, outputAddress) => matchFound || outputAddress in inputAddressAmounts, false);
 	if (outputAddressInInputAddresses) {
 		warnings.push('Addresses are being reused');
-	}
-	if (warnings.length) {
-		console.log('Transaction warnings:');
-		console.log(warnings);
 	}
 
 	return {
@@ -105,6 +101,36 @@ function getTransactionInfoObject(tx) {
 		outputAddressAmounts,
 		warnings
 	};
+}
+
+function getTransactionInfoString(tx) {
+	assert(tx instanceof bsv.Transaction);
+
+	const transactionInfoObject = getTransactionInfoObject(tx);
+	const indent = '   ';
+	let str = '';
+
+	assert(Array.isArray(transactionInfoObject.warnings));
+	if (transactionInfoObject.warnings.length) {
+		for (const warning of transactionInfoObject.warnings) {
+			str += `Warning: ${warning}.\n`;
+		}
+		str += '\n';
+	}
+
+	str += 'Input address amounts:';
+	assert(transactionInfoObject.inputAddressAmounts);
+	for (const [address, amount] of Object.entries(transactionInfoObject.inputAddressAmounts)) {
+		str += `\n${indent}${address}: ${amount || 'Unknown amount'}.`;
+	}
+
+	str += '\n\nOutput address amounts:';
+	assert(transactionInfoObject.outputAddressAmounts);
+	for (const [address, amount] of Object.entries(transactionInfoObject.outputAddressAmounts)) {
+		str += `\n${indent}${address}: ${amount}.`;;
+	}
+
+	return str;
 }
 
 async function fetchAddressesUTXOs(addresses) {
@@ -754,7 +780,7 @@ function renderTransactionViewer() {
 					throw new Error('Transaction text area is empty.');
 				}
 				const tx = stringToTransaction(transactionTextArea.value);
-				viewTransactionTextArea.value = stringifyWithTabs(getTransactionInfoObject(tx));
+				viewTransactionTextArea.value = getTransactionInfoString(tx);
 				updateButtonVisibilityFromTextArea(copyViewTransactionTextAreaButton, viewTransactionTextArea);
 			} catch (error) {
 				console.log(error);
