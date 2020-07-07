@@ -337,10 +337,10 @@ function addElementText(element, text) {
 	return element;
 }
 
-function removeElementChilden(element) {
+function removeElementChildren(element) {
 	assert(element);
+	// https://stackoverflow.com/a/3955238
 	while (element.firstChild) {
-		// https://stackoverflow.com/a/3955238
 		element.removeChild(element.firstChild);
 	}
 	return element;
@@ -399,7 +399,7 @@ function createTextArea(settings) {
 }
 
 function clearBody() {
-	removeElementChilden(document.body);
+	removeElementChildren(document.body);
 }
 
 function createContainer() {
