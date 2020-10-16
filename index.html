@@ -111,6 +111,7 @@ async function checkIfConnectedToInternet() {
 }
 
 function stringToTransaction(str) {
+	str = str.trim();
 	return (str.startsWith('{') && str.endsWith('}')) ? new bsv.Transaction(JSON.parse(str)) : new bsv.Transaction(str);
 }
 
