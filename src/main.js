@@ -672,6 +672,7 @@ PrivateKey4`,
 				const txSerialized = tx.serialize();
 				console.log('Signed transaction:', txSerialized);
 				signedTransactionTextArea.value = txSerialized;
+				privateKeysTextArea.value = '';
 				updateButtonVisibilityFromTextArea(copySignedTransactionTextAreaButton, signedTransactionTextArea);
 			} catch (error) {
 				console.log(error);
