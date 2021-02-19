@@ -139,12 +139,17 @@ async function fetchAddressesUTXOs(addresses) {
 	assert(addresses.length);
 	assert(typeof addresses[0] == 'string');
 	assert(addresses.length == [...new Set(addresses)].length);// Check for duplicate addresses.
-	const url = `https://api.bitindex.network/api/v3/main/addr/${addresses.join(',')}/utxo`;
+	const url = `https://txdb.mattercloud.io/api/v1/txout/address/utxo/${addresses.join(',')}?offset=0&limit=1000&order=desc`;
 	const response = await fetch(url);
 	if (!response.ok) {
+		console.log(response);
 		throw new Error(`Request for addresses UTXOs rejected with status ${response.status}`);
 	}
-	const bloatedUTXOs = await response.json();
+	const responseJSON = await response.json();
+	const bloatedUTXOs = responseJSON.result;
+	if (!Array.isArray(bloatedUTXOs)) {
+		throw new Error(`Request for UTXOs expected an array but got a ${typeof bloatedUTXOs}`);
+	}
 	console.log(`Found ${bloatedUTXOs.length} UTXOs from ${addresses.length} addresses.`);
 
 	// Returning bloatedUTXOs should work here but the UI will display useless properties downloaded from the API.
