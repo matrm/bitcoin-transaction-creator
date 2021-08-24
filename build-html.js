@@ -9,6 +9,7 @@ function sha256(data) {
 }
 
 function verifyHash(hash, expectedHash, errorMessagePrefix) {
+	//return;// Uncomment this return statement while testing to disable hash verification.
 	if (hash !== expectedHash) {
 		throw new Error(`${errorMessagePrefix || 'Unexpected hash.'}
 Hash:          ${hash}
