@@ -17,11 +17,11 @@ Expected hash: ${expectedHash}`);
 	}
 }
 
-const bsvLibVersion = '1.5.3';
+const bsvLibVersion = '1.5.6';
 // This hash will need to be updated after changing bsvLibVersion.
-const bsvLibExpectedHash = '58d7293e857195ff55bc55d2a9d2723e8a0bef2a651524f06df55db3c14b2772';
+const bsvLibExpectedHash = '3cf8ca3dec33161c8515f50e6135472b152aed677ec4ac176b4c82dae95db4d3';
 // This hash will need to be updated when making changes to any parts of the HTML.
-const htmlExpectedHash = '68ce249166ab9e3c16b0ab205f9b87b5d3d559852e5169cfd1352c81ffdb2f8c';
+const htmlExpectedHash = 'b228f1e7a0c98cd3d9234dcc91a9e9a93438fb70b72163683d98ea53109a357e';
 
 const libSaveFolder = 'lib';
 // Create lib save folder if it doesn't exist yet.
