@@ -100,6 +100,17 @@ function stringifyWithTabs(value) {
 	return JSON.stringify(value, null, '\t');
 }
 
+// Only returns properties that are different but still exist in both objects. Uses obj2's value.
+function compareObjectReturnDifferencesFromSecondObject(obj1, obj2) {
+	const differences = {};
+	for (const [key2, value2] of Object.entries(obj2)) {
+		if (obj1[key2] !== undefined && obj1[key2] !== value2) {
+			differences[key2] = value2;
+		}
+	}
+	return differences;
+}
+
 async function checkIfConnectedToInternet() {
 	const urls = [
 		'https://api.bitindex.network/api/',
@@ -287,6 +298,14 @@ function createUnsignedTransaction(settings) {
 
 	let tx = new bsv.Transaction().from(utxos);
 
+	// Properties from the parseAdvancedTransactionSettings function will be a part of the parameter settings object if not using default advanced transaction settings.
+	if (settings.feePerKb !== undefined) {
+		tx.feePerKb(settings.feePerKb);
+	}
+	if (settings.nLockTime !== undefined) {
+		tx.nLockTime = settings.nLockTime;
+	}
+
 	// Make sure changeAddress was removed.
 	assert(splitAmount == Math.floor(totalAmount / (outputAddressesAndAmounts.length + 1)));
 	// Add all but change address (was the last element of oridinal outputAddressesAndAmounts).
@@ -301,6 +320,14 @@ function createUnsignedTransaction(settings) {
 	});
 
 	tx.change(changeAddress);
+
+	// Avoid the "or" bug from https://github.com/moneybutton/bsv/blob/17e99baa005d2add912312484430bb626211127a/lib/transaction/transaction.js#L901
+	// (this._feePerKb || Transaction.FEE_PER_KB) "or" logic forces default fee when user sets feePerKb to 0.
+	if (settings.feePerKb === 0 && tx.getFee() !== 0) {
+		console.log(`Force changing fee of transaction to 0 because bsv lib changed it to ${tx.getFee()}.`);
+		tx.fee(settings.feePerKb);
+		assert(tx.getFee() === 0);
+	}
 
 	assert(tx instanceof bsv.Transaction);
 	return tx;
@@ -328,13 +355,17 @@ function addressesTextAreaValueToArrayOfAddressStringsNoDuplicates(addressesText
 ]
 */function outputAddressesTextAreaValueToAddressAmountObjects(text) {
 	const addressBalanceDelimiter = ':';
+	assert(addressBalanceDelimiter.length == 1);
+	assert(addressBalanceDelimiter !== ',');
+	assert(addressBalanceDelimiter !== ' ');
+	assert(addressBalanceDelimiter !== '\n');
 	const addressAmountStrings = text
 		// Convert commas to new lines.
 		.split(',')
 		.join('\n')
 
 		.split('\n')
-		.map(line => line.includes(addressBalanceDelimiter) ? line.trimLeft() : line.trim())
+		.map(line => line.trim())
 		.filter(line => line.length);
 
 	const addressAmountObjects = addressAmountStrings.map(uiOutput => {
@@ -374,6 +405,46 @@ function addressesTextAreaValueToArrayOfAddressStringsNoDuplicates(addressesText
 	}
 
 	return addressAmountObjects;
+}
+
+function parseAdvancedTransactionSettings(text) {
+	const obj = JSON.parse(text);
+
+	// Missing property checks.
+	const missingPropertyErrorStringPrefix = 'Advanced transaction settings is missing a case sensitive property: ';
+	if (obj.nLockTime === undefined) {
+		throw new Error(missingPropertyErrorStringPrefix + 'nLockTime');
+	}
+	if (obj.feePerKb === undefined) {
+		throw new Error(missingPropertyErrorStringPrefix + 'feePerKb');
+	}
+
+	// nLockTime checks.
+	if (!Number.isInteger(obj.nLockTime)) {
+		throw new Error(`nLockTime (${obj.nLockTime}) must be an integer.`);
+	}
+	if (obj.nLockTime < 0) {
+		throw new Error(`nLockTime (${obj.nLockTime}) must not be negative.`);
+	}
+	if (!Number.isSafeInteger(obj.nLockTime) && Number.isInteger(obj.nLockTime)) {
+		throw new Error(`nLockTime (${obj.nLockTime}) must be <= ${Number.MAX_SAFE_INTEGER}.`);
+	}
+
+	// feePerKb checks.
+	if (!Number.isInteger(obj.feePerKb)) {
+		throw new Error(`feePerKb (${obj.feePerKb}) must be an integer.`);
+	}
+	if (obj.feePerKb < 0) {
+		throw new Error(`feePerKb (${obj.feePerKb}) must not be negative.`);
+	}
+	{
+		const FEE_SAFETY_LIMIT = 10000;
+		if (obj.feePerKb > FEE_SAFETY_LIMIT) {// Safety max fee.
+			throw new Error(`feePerKb (${obj.feePerKb}) is over the safety limit of ${FEE_SAFETY_LIMIT}.`);
+		}
+	}
+
+	return obj;
 }
 
 function privateKeysTextAreaValueToArrayOfPrivateKeys(privateKeysText) {
@@ -494,7 +565,14 @@ function renderUnsignedTransactionCreation() {
 	clearBody();
 
 	const DOWNLOAD_UTXOS_FROM_ADDRESSES_BUTTON_NAME = 'Download UTXOs From Addresses';
+	const SHOW_ADVANCED_TRANSACTION_SETTINGS_BUTTON_NAME = 'Show Advanced Transaction Settings';
+	const HIDE_ADVANCED_TRANSACTION_SETTINGS_BUTTON_NAME = 'Hide Advanced Transaction Settings';
 	const CREATE_UNSIGNED_TRANSACTION_BUTTON_NAME = 'Create Unsigned Transaction';
+	const DEFAULT_advancedTransactionSettingsTextArea = stringifyWithTabs({
+		nLockTime: new bsv.Transaction().nLockTime,
+		feePerKb: bsv.Transaction.FEE_PER_KB
+	});
+	const DEFAULT_advancedTransactionSettings = Object.freeze(parseAdvancedTransactionSettings(DEFAULT_advancedTransactionSettingsTextArea));
 
 	const container = createContainer();
 
@@ -569,6 +647,14 @@ If the total amount is 85000: Address3 and Address4 will get 5000. Address6 will
 		}
 	});
 
+	const advancedTransactionSettingsTextArea = createTextArea({
+		placeholder: DEFAULT_advancedTransactionSettingsTextArea,
+		value: DEFAULT_advancedTransactionSettingsTextArea,
+		rows: 8,
+		cols: 60,
+	});
+	const usingDefault_advancedTransactionSettings = () => advancedTransactionSettingsTextArea.value == DEFAULT_advancedTransactionSettingsTextArea;
+
 	const unsignedTransactionTextArea = createTextArea({
 		placeholder: 'An unsigned transaction will be output here that can be signed using private keys.',
 		rows: 18,
@@ -611,7 +697,19 @@ If the total amount is 85000: Address3 and Address4 will get 5000. Address6 will
 					console.log(outputAddressesAndAmounts);
 					throw new Error('No valid output addresses.');
 				}
-				const unsignedTransaction = createUnsignedTransaction({ utxos, outputAddressesAndAmounts });
+
+				if (!advancedTransactionSettingsTextArea.value) {
+					advancedTransactionSettingsTextArea.value = DEFAULT_advancedTransactionSettingsTextArea;
+					alert('Advanced transaction settings have been reset to the default values.');
+				}
+				const advancedTransactionSettings = parseAdvancedTransactionSettings(advancedTransactionSettingsTextArea.value);
+				const advancedTransactionSettingsDifference = compareObjectReturnDifferencesFromSecondObject(DEFAULT_advancedTransactionSettings, advancedTransactionSettings);
+				if (Object.keys(advancedTransactionSettingsDifference).length) {
+					console.log(`Advanced transaction settings that are changed from the defaults:\n${stringifyWithTabs(advancedTransactionSettingsDifference)}`);
+				}
+
+				// Only passes advancedTransactionSettings that are different from but still existing in DEFAULT_advancedTransactionSettings.
+				const unsignedTransaction = createUnsignedTransaction({ utxos, outputAddressesAndAmounts, ...advancedTransactionSettingsDifference });
 				/* From https://github.com/moneybutton/bsv/blob/master/docs/transaction.md#serialization
 					"toObject: Returns a plain JavaScript object with no methods and enough information to
 					fully restore the state of this transaction. Using other serialization methods (except
@@ -627,6 +725,49 @@ If the total amount is 85000: Address3 and Address4 will get 5000. Address6 will
 			}
 		}
 	});
+
+
+	// These elements are created here because its inner elements are changed based on button presses.
+	const advancedTransactionSettings_tr = document.createElement('tr');
+	const advancedTransactionSettingsHidden_td = (() => {
+		const td = document.createElement('td');
+		td.colSpan = 2;// https://stackoverflow.com/a/48871500
+		return td;
+	})();
+	const advancedTransactionSettingsShown_td = (() => {
+		const td = document.createElement('td');
+		td.colSpan = 2;// https://stackoverflow.com/a/48871500
+		return td;
+	})();
+
+	advancedTransactionSettingsShown_td.appendChild(createButton({
+		value: HIDE_ADVANCED_TRANSACTION_SETTINGS_BUTTON_NAME,
+		onclick: () => {
+			if (!advancedTransactionSettingsTextArea.value) {
+				advancedTransactionSettingsTextArea.value = DEFAULT_advancedTransactionSettingsTextArea;
+				alert('Advanced transaction settings have been reset to the default values.');
+			}
+			if (!usingDefault_advancedTransactionSettings()) {
+				alert('Cannot hide advanced transaction settings when they are different from the default ones. Delete the entire text area to reset them.');
+				return;
+			}
+			removeElementChildren(advancedTransactionSettings_tr);
+			advancedTransactionSettings_tr.appendChild(advancedTransactionSettingsHidden_td);
+		}
+	}));
+	addElementLineBreak(advancedTransactionSettingsShown_td);
+	advancedTransactionSettingsShown_td.appendChild(advancedTransactionSettingsTextArea);
+
+	advancedTransactionSettingsHidden_td.appendChild(createButton({
+		value: SHOW_ADVANCED_TRANSACTION_SETTINGS_BUTTON_NAME,
+		onclick: () => {
+			removeElementChildren(advancedTransactionSettings_tr);
+			advancedTransactionSettings_tr.appendChild(advancedTransactionSettingsShown_td);
+		}
+	}));
+
+	advancedTransactionSettings_tr.appendChild(advancedTransactionSettingsHidden_td);// Advanced transaction settings hidden by default.
+
 
 	const table = document.createElement('table');
 	table.classList.add('standardMargin');
@@ -664,7 +805,10 @@ If the total amount is 85000: Address3 and Address4 will get 5000. Address6 will
 		return tr;
 	})());
 
-	// Second row. Unsigned transaction output.
+	// Second row. Advanced transaction settings.
+	table.appendChild(advancedTransactionSettings_tr);
+
+	// Third row. Unsigned transaction output.
 	table.appendChild((() => {
 		const tr = document.createElement('tr');
 
