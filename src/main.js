@@ -160,7 +160,6 @@ async function fetchAddressesUTXOs(addresses) {
 	if (!Array.isArray(bloatedUTXOs)) {
 		throw new Error(`Request for UTXOs expected an array but got a ${typeof bloatedUTXOs}`);
 	}
-	console.log(`Found ${bloatedUTXOs.length} UTXOs from ${addresses.length} addresses.`);
 
 	// Returning bloatedUTXOs should work here but the UI will display useless properties downloaded from the API.
 
@@ -256,14 +255,66 @@ function createUnsignedTransaction(settings) {
 	return tx;
 }
 
-function addressesTextAreaValueToArrayOfAddressStringsNoDuplicates(addressesText) {
-	return splitStringFromNewLineAndComma(addressesText)
-		// Check for invalid addresses.
-		.map(address => new bsv.Address.fromString(address))
-		.map(address => address.toString())
+function txIsSigned(tx) {
+	// Only checks if inputs have a script property with length > 0.
+	assert(tx instanceof bsv.Transaction);
+	tx.inputs.forEach(input => {
+		const inputPlainObject = input.toObject();// To get script as string.
+		if (inputPlainObject.script.length == 0) {
+			return false;
+		}
+	});
+	return true;
+}
 
-		// Remove duplicates.
-		.filter((element, index, array) => array.indexOf(element) == index);
+/* Return type example (UTXOs):
+[
+	{
+		"address": "1BitcoinEaterAddressDontSendf59kuE",
+		"txid": "039d527e5c57123f96cb6813bd623268ecd05e99e097f6abd2ecff90ad8feb80",
+		"vout": 0,
+		"scriptPubKey": "76a914759d6677091e973b9e9d99f19c68fbf43e3f05f988ac",
+		"satoshis": 10000
+	}
+]
+*/
+function getUTXOsFromSignedTx(tx) {
+	assert(tx instanceof bsv.Transaction);
+	assert(txIsSigned(tx));// Only accepts signed transactions because txid changes after signing.
+	assert(Array.isArray(tx.outputs));
+
+	return tx.outputs.map((output, outputIndex) => {
+		assert(output.script instanceof bsv.Script);
+		const outputPlainObject = output.toObject();// To get script as string.
+		return {
+			address: output.script.toAddress().toString(),
+			txid: tx.hash,
+			vout: outputIndex,
+			scriptPubKey: outputPlainObject.script,
+			satoshis: output.satoshis
+		};
+	}).filter(txo => txo.satoshis);// Remove 0 satoshi outputs.
+}
+
+// Returns tx UTXOs that are spent to an address in the addresses Set.
+function getUTXOsFromSignedTxAndAddressesSet(tx, addresses) {
+	assert(tx instanceof bsv.Transaction);
+	assert(addresses instanceof Set);
+	assert(Array.isArray(tx.outputs));
+	return getUTXOsFromSignedTx(tx).filter(utxo => addresses.has(utxo.address));
+}
+
+// Returns txs UTXOs that are spent to an address in the addresses Set.
+function getUTXOsFromSignedTxsAndAddressesSet(txs, addresses) {
+	assert(Array.isArray(txs));
+	assert(addresses instanceof Set);
+	const allUTXOs = [];
+	txs.forEach(tx => {
+		assert(tx instanceof bsv.Transaction);
+		assert(Array.isArray(tx.outputs));
+		allUTXOs.push(...getUTXOsFromSignedTxAndAddressesSet(tx, addresses));
+	});
+	return allUTXOs;
 }
 
 /* Return type example:
@@ -384,14 +435,56 @@ async function inputAddressesTextArea_to_inputUTXOsTextArea(inputAddressesTextAr
 		if (!inputAddressesTextArea.value) {
 			throw new Error('Input addresses text area is empty.');
 		}
-		const inputAddresses = addressesTextAreaValueToArrayOfAddressStringsNoDuplicates(inputAddressesTextArea.value);
+
+		// values are expected to be an address or signed transaction.
+		// Duplicates are removed.
+		const values = [...new Set(splitStringFromNewLineAndComma(inputAddressesTextArea.value))];
+
+		const inputAddresses = [];
+		const signedTransactions = [];
+		const otherValues = [];
+		values.forEach(value => {
+			try {
+				inputAddresses.push(new bsv.Address.fromString(value).toString());
+			} catch (notAddressError) {
+				// Input is not an address. It is either a transaction or an invalid input.
+				try {
+					const tx = stringToTransaction(value);
+					if (!txIsSigned(tx)) {
+						throw new Error('Input transaction must be signed.');
+					}
+					signedTransactions.push(tx);
+				} catch (notAddressOrTransactionError) {
+					// Input is invalid.
+					otherValues.push(value);
+				}
+			}
+		});
+		assert(inputAddresses.length + signedTransactions.length + otherValues.length == values.length);
 		if (!inputAddresses.length) {
 			throw new Error('No valid input addresses.');
 		}
-		const utxos = await fetchAddressesUTXOs(inputAddresses);
-		if (!utxos.length) {
-			throw new Error('Found no UTXOs from input addresses.');
+		if (otherValues.length) {
+			const errorMessage = 'Inputs not recognized as an address or signed transaction.';
+			console.log(stringifyWithTabs(otherValues));
+			throw new Error(errorMessage);
 		}
+
+		let utxos = undefined;
+		// If the user inputs signed transactions then use the outputs from that instead of downloading them.
+		if (signedTransactions.length) {
+			utxos = getUTXOsFromSignedTxsAndAddressesSet(signedTransactions, new Set(inputAddresses));
+			console.log(`Found ${utxos.length} UTXOs from ${inputAddresses.length} addresses in ${signedTransactions.length} signed transactions.`);
+
+		} else {
+			utxos = await fetchAddressesUTXOs(inputAddresses);
+			console.log(`Downloaded ${utxos.length} UTXOs from ${inputAddresses.length} addresses.`);
+		}
+		assert(Array.isArray(utxos));
+		if (!utxos.length) {
+			throw new Error('Found no UTXOs.');
+		}
+
 		inputUTXOsTextArea.value = stringifyWithTabs(utxos);
 		inputAddressesTextArea.value = '';
 	} catch (error) {
