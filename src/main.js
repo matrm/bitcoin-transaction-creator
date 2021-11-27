@@ -787,6 +787,7 @@ If the total amount is 85000: Address3 and Address4 will get 5000. Address6 will
 
 	const table = document.createElement('table');
 	table.classList.add('standardMargin');
+	table.classList.add('horizontalCenterMargins');
 
 	// First row. User inputs.
 	table.appendChild((() => {
@@ -925,6 +926,7 @@ PrivateKey4`,
 
 	const table = document.createElement('table');
 	table.classList.add('standardMargin');
+	table.classList.add('horizontalCenterMargins');
 
 	// First row. User inputs.
 	table.appendChild((() => {
@@ -1051,6 +1053,7 @@ function renderTransactionViewer() {
 
 	const table = document.createElement('table');
 	table.classList.add('standardMargin');
+	table.classList.add('horizontalCenterMargins');
 
 	// First row. User inputs.
 	table.appendChild((() => {
