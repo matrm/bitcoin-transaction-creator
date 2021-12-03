@@ -263,7 +263,9 @@ function checkPlainUTXO(utxo) {
 
 // Returns a new UTXO object.
 function checkAndFormatPlainUTXO(utxo) {
-	assert(utxo);
+	if (typeof utxo != 'object') {
+		throw new Error(`UTXO is a "${typeof utxo}" but expected to be an object`);
+	}
 	const bsvUTXO = new bsv.Transaction.UnspentOutput(utxo);
 	const formattedUTXO = bsvUTXO.toObject();
 	delete formattedUTXO.amount;
@@ -282,7 +284,9 @@ function checkPlainUTXOs(utxos) {
 
 // Returns a new array of new UTXOs.
 function checkAndFormatPlainUTXOs(utxos) {
-	assert(Array.isArray(utxos));
+	if (!Array.isArray(utxos)) {
+		throw new Error(`UTXOs are a "${typeof utxos}" but expected to be an array`);
+	}
 	return utxos.map(checkAndFormatPlainUTXO);
 }
 
