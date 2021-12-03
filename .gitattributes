@@ -1,2 +1,2 @@
 # Checkout all text files with a specific line ending so the hashes are valid when building index.html.
-* text eol=lf
+* text=auto eol=lf
