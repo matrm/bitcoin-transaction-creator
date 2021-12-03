@@ -584,17 +584,27 @@ function createButton(settings) {
 	return Object.assign(button, settings);
 }
 
-function updateButtonVisibilityFromTextArea(button, textArea) {
+function enableButton(button) {
 	assert(button);
-	assert(textArea);
-	if (textArea.value) {
-		button.disabled = false;
-		button.style.opacity = 1.0;
-		button.classList.add('inputButton');
+	button.disabled = false;
+	button.style.opacity = 1.0;
+	button.classList.add('inputButton');
+}
+
+function disableButton(button) {
+	assert(button);
+	button.disabled = true;
+	button.style.opacity = 0.5;
+	button.classList.remove('inputButton');
+}
+
+function updateButtonVisibilityFromStringLength(button, str) {
+	assert(button);
+	assert(typeof str == 'string');
+	if (str.length) {
+		enableButton(button);
 	} else {
-		button.disabled = true;
-		button.style.opacity = 0.5;
-		button.classList.remove('inputButton');
+		disableButton(button);
 	}
 }
 
@@ -609,7 +619,7 @@ function createCopyToClipboardFromTextAreaButton(textArea) {
 		button.value = valueAfterCopying;
 		setTimeout(() => button.value = valueBeforeCopying, 3000);
 	};
-	updateButtonVisibilityFromTextArea(button, textArea);
+	updateButtonVisibilityFromStringLength(button, textArea.value);
 	return button;
 }
 
@@ -784,7 +794,7 @@ If the total amount is 85000: Address3 and Address4 will get 5000. Address6 will
 				*/
 				const unsignedTransactionString = JSON.stringify(unsignedTransaction.toObject());
 				unsignedTransactionTextArea.value = unsignedTransactionString;
-				updateButtonVisibilityFromTextArea(copyUnsignedTransactionTextAreaButton, unsignedTransactionTextArea);
+				updateButtonVisibilityFromStringLength(copyUnsignedTransactionTextAreaButton, unsignedTransactionTextArea.value);
 			} catch (error) {
 				console.log(error);
 				alert(`Unable to create transaction: ${error.message}`);
@@ -966,7 +976,7 @@ PrivateKey4`,
 				console.log('Signed transaction:', txSerialized);
 				signedTransactionTextArea.value = txSerialized;
 				privateKeysTextArea.value = '';
-				updateButtonVisibilityFromTextArea(copySignedTransactionTextAreaButton, signedTransactionTextArea);
+				updateButtonVisibilityFromStringLength(copySignedTransactionTextAreaButton, signedTransactionTextArea.value);
 			} catch (error) {
 				console.log(error);
 				alert(`Unable to sign transaction: ${error.message}`);
@@ -1076,7 +1086,7 @@ function renderTransactionViewer() {
 				}
 				const tx = stringToTransaction(transactionTextArea.value);
 				viewTransactionTextArea.value = getTransactionInfoString(tx);
-				updateButtonVisibilityFromTextArea(copyViewTransactionTextAreaButton, viewTransactionTextArea);
+				updateButtonVisibilityFromStringLength(copyViewTransactionTextAreaButton, viewTransactionTextArea.value);
 			} catch (error) {
 				console.log(error);
 				alert(`Unable to view transaction: ${error.message}`);
@@ -1093,7 +1103,7 @@ function renderTransactionViewer() {
 				}
 				const tx = stringToTransaction(transactionTextArea.value);
 				viewTransactionTextArea.value = stringifyWithTabs(tx.toObject());
-				updateButtonVisibilityFromTextArea(copyViewTransactionTextAreaButton, viewTransactionTextArea);
+				updateButtonVisibilityFromStringLength(copyViewTransactionTextAreaButton, viewTransactionTextArea.value);
 			} catch (error) {
 				console.log(error);
 				alert(`Unable to view transaction: ${error.message}`);
