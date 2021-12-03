@@ -136,6 +136,7 @@ function getTransactionInfoObject(tx) {
 		const script = input.output ? input.output.script : input.script;
 		assert(script instanceof bsv.Script);
 		const address = script.toAddress().toString();
+		// Address may be 'false'. See https://github.com/moneybutton/bsv/blob/17e99baa005d2add912312484430bb626211127a/lib/script/script.js#L1049
 		const amount = input.output ? input.output.satoshis : null;// Change to undefined instead of null if this address shouldn't be a property when amount is unknown.
 		if (!inputAddressAmounts[address]) {
 			inputAddressAmounts[address] = amount;
@@ -153,6 +154,7 @@ function getTransactionInfoObject(tx) {
 		assert(output.script instanceof bsv.Script);
 		//assert(output.script.isPublicKeyHashOut());// This assertion can be used if no transactions created elsewhere are used.
 		const address = output.script.toAddress().toString();
+		// Address may be 'false'. See https://github.com/moneybutton/bsv/blob/17e99baa005d2add912312484430bb626211127a/lib/script/script.js#L1049
 		const amount = output.satoshis;
 		if (!outputAddressAmounts[address]) {
 			outputAddressAmounts[address] = amount;
@@ -222,6 +224,68 @@ function getTransactionInfoString(tx) {
 	return str;
 }
 
+function checkAndFormatPrivateKeyString(str) {
+	return new bsv.PrivateKey.fromString(str).toString();
+}
+
+function checkAndFormatAddressString(str) {
+	return new bsv.Address.fromString(str).toString();
+}
+
+function checkPlainUTXO(utxo) {
+	const numProperties = Object.keys(utxo).length;
+	const numExpectedProperties = 5;
+	if (typeof utxo != 'object') {
+		throw new Error(`UTXO is a "${typeof utxo}" but expected to be an object`);
+	}
+	if (!utxo.address || typeof utxo.address != 'string') {
+		throw new Error('UTXO must have an address property of type string');
+	} else {
+		checkAndFormatAddressString(utxo.address);// Change this to compare the string returned by checkAndFormatAddressString with utxo.address if enforcing address format is desired. Assuming the bsv library ever accepts mulltiple address formats.
+	}
+	if (!utxo.txid || typeof utxo.txid != 'string') {
+		throw new Error('UTXO must have a txid property of type string');
+	}
+	if (!Number.isSafeInteger(utxo.vout) || utxo.vout < 0) {
+		throw new Error('UTXO must have a vout property of type number (integer) that is not negative or too big');
+	}
+	if (!utxo.scriptPubKey || typeof utxo.scriptPubKey != 'string') {
+		throw new Error('UTXO must have a scriptPubKey property of type string');
+	}
+	if (!Number.isSafeInteger(utxo.satoshis) || !utxo.satoshis) {
+		throw new Error('UTXO must have a satoshis property of type number (integer) that is not negative, zero, or too big');
+	}
+	if (numProperties != numExpectedProperties) {
+		throw new Error(`UTXO has ${numProperties} properties but should have ${numExpectedProperties}`);
+	}
+	return utxo;
+}
+
+// Returns a new UTXO object.
+function checkAndFormatPlainUTXO(utxo) {
+	assert(utxo);
+	const bsvUTXO = new bsv.Transaction.UnspentOutput(utxo);
+	const formattedUTXO = bsvUTXO.toObject();
+	delete formattedUTXO.amount;
+	formattedUTXO.satoshis = bsvUTXO.satoshis;
+	checkPlainUTXO(formattedUTXO);// This line is only for safety in case bsv lib changes utxo properties.
+	return formattedUTXO;
+}
+
+function checkPlainUTXOs(utxos) {
+	if (!Array.isArray(utxos)) {
+		throw new Error(`UTXOs are a "${typeof utxos}" but expected to be an array`);
+	}
+	utxos.forEach(checkPlainUTXO);
+	return utxos;
+}
+
+// Returns a new array of new UTXOs.
+function checkAndFormatPlainUTXOs(utxos) {
+	assert(Array.isArray(utxos));
+	return utxos.map(checkAndFormatPlainUTXO);
+}
+
 async function fetchAddressesUTXOs(addresses) {
 	assert(Array.isArray(addresses));
 	assert(addresses.length);
@@ -238,36 +302,16 @@ async function fetchAddressesUTXOs(addresses) {
 		throw new Error(`Request for UTXOs expected an array but got a ${typeof bloatedUTXOs}`);
 	}
 
-	// Returning bloatedUTXOs should work here but the UI will display useless properties downloaded from the API.
-
-	const minimalUTXOs = bloatedUTXOs
-		.map(utxo => new bsv.Transaction.UnspentOutput(utxo))
-		.map(utxo => JSON.parse(JSON.stringify(utxo)))
-
-		// Replace 'amount' property with 'satoshis' from bloatedUTXOs.
-		// This must not come after sorting because it depends on having same indexes as bloatedUTXOs.
-		.map((utxo, index) => {
-			const satoshis = bloatedUTXOs[index].satoshis;
-			if (satoshis) {
-				delete utxo.amount;
-				utxo.satoshis = satoshis;
-			}
-			return utxo;
-		})
-
-		// Sort by alphabetical order of the utxo in JSON format.
-		.map(utxo => JSON.stringify(utxo))
+	// Returning bloatedUTXOs should work here but the UI will display useless properties from the API in an unreliable order.
+	// Check for errors -> format -> convert UTXOs from plain obj to string -> remove duplicates -> sort -> convert UTXOs from string to plain obj.
+	let minimalUTXOs = checkAndFormatPlainUTXOs(bloatedUTXOs)
+		// Convert to array of strings so duplicates can be removed and the array can be sorted.
+		.map(utxo => JSON.stringify(utxo));
+	// Remove duplicates while it is a string and before sorting.
+	minimalUTXOs = [...new Set(minimalUTXOs)]
 		.sort()
-
-		// While elements are strings may as well remove duplicates.
-		// Not removing duplicates should only affect the UI. The output transaction should be the same either way.
-		// Removing duplicates here allows checking if the API is broken assuming no duplicate addresses are allowed in this function.
-		.filter((element, index, array) => array.indexOf(element) == index)
-
 		.map(utxoString => JSON.parse(utxoString));
 
-	// If this assertion fails then the API is broken.
-	// Duplicate UTXOs should not be removed because no duplicate addresses should be passed to this function.
 	assert(minimalUTXOs.length == bloatedUTXOs.length);
 
 	return minimalUTXOs;
@@ -360,7 +404,7 @@ function getUTXOsFromSignedTx(tx) {
 	assert(txIsSigned(tx));// Only accepts signed transactions because txid changes after signing.
 	assert(Array.isArray(tx.outputs));
 
-	return tx.outputs.map((output, outputIndex) => {
+	const utxos = tx.outputs.map((output, outputIndex) => {
 		assert(output.script instanceof bsv.Script);
 		const outputPlainObject = output.toObject();// To get script as string.
 		return {
@@ -371,6 +415,8 @@ function getUTXOsFromSignedTx(tx) {
 			satoshis: output.satoshis
 		};
 	}).filter(txo => txo.satoshis);// Remove 0 satoshi outputs.
+	assert(checkPlainUTXOs(utxos));
+	return utxos;
 }
 
 // Returns tx UTXOs that are spent to an address in the addresses Set.
@@ -426,7 +472,7 @@ function getUTXOsFromSignedTxsAndAddressesSet(txs, addresses) {
 
 			// Check for errors.
 			try {
-				const addressTest = (new bsv.Address.fromString(address)).toString();
+				checkAndFormatAddressString(address);
 			} catch (error) {
 				throw new Error(`Address "${address}" is not valid: ${error.message}`);
 			}
