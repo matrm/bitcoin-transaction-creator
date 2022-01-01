@@ -408,17 +408,30 @@ function getUTXOsFromSignedTx(tx) {
 	assert(txIsSigned(tx));// Only accepts signed transactions because txid changes after signing.
 	assert(Array.isArray(tx.outputs));
 
-	const utxos = tx.outputs.map((output, outputIndex) => {
-		assert(output.script instanceof bsv.Script);
-		const outputPlainObject = output.toObject();// To get script as string.
-		return {
-			address: output.script.toAddress().toString(),
-			txid: tx.hash,
-			vout: outputIndex,
-			scriptPubKey: outputPlainObject.script,
-			satoshis: output.satoshis
-		};
-	}).filter(txo => txo.satoshis);// Remove 0 satoshi outputs.
+	const utxos = tx.outputs
+		.map((output, outputIndex) => {
+			assert(output.script instanceof bsv.Script);
+			if (!output.script.isPublicKeyHashOut()) {
+				return null;
+			}
+			assert(Number.isSafeInteger(output.satoshis));
+			if (!output.satoshis) {
+				return null;
+			}
+			const outputPlainObject = output.toObject();// To get script as string.
+			return {
+				address: output.script.toAddress().toString(),
+				txid: tx.hash,
+				vout: outputIndex,
+				scriptPubKey: outputPlainObject.script,
+				satoshis: output.satoshis
+			};
+		})
+
+		// Non UTXOs are converted to null earlier so they can be filtered out here.
+		// They can't be filtered earlier because outputIndex will be lost.
+		.filter(output => !!output);
+
 	assert(checkPlainUTXOs(utxos));
 	return utxos;
 }
