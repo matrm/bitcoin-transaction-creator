@@ -246,8 +246,8 @@ function checkPlainUTXO(utxo) {
 	if (!utxo.txid || typeof utxo.txid != 'string') {
 		throw new Error('UTXO must have a txid property of type string');
 	}
-	if (!Number.isSafeInteger(utxo.vout) || utxo.vout < 0) {
-		throw new Error('UTXO must have a vout property of type number (integer) that is not negative or too big');
+	if (!Number.isSafeInteger(utxo.outputIndex) || utxo.outputIndex < 0) {
+		throw new Error('UTXO must have a outputIndex property of type number (integer) that is not negative or too big');
 	}
 	if (!utxo.script || typeof utxo.script != 'string') {
 		throw new Error('UTXO must have a script property of type string');
@@ -277,6 +277,11 @@ function checkAndFormatPlainUTXO(utxo) {
 	assert(typeof formattedUTXO.scriptPubKey == 'string');
 	formattedUTXO.script = formattedUTXO.scriptPubKey;
 	delete formattedUTXO.scriptPubKey;
+
+	// Rename 'vout' property to 'outputIndex'. See: https://github.com/moneybutton/bsv/blob/17e99baa005d2add912312484430bb626211127a/lib/transaction/unspentoutput.js#L91
+	assert(Number.isSafeInteger(formattedUTXO.vout));
+	formattedUTXO.outputIndex = formattedUTXO.vout;
+	delete formattedUTXO.vout;
 
 	checkPlainUTXO(formattedUTXO);// This line is only for safety in case bsv lib changes utxo properties.
 	return formattedUTXO;
@@ -405,7 +410,7 @@ function txIsSigned(tx) {
 	{
 		"address": "1BitcoinEaterAddressDontSendf59kuE",
 		"txid": "039d527e5c57123f96cb6813bd623268ecd05e99e097f6abd2ecff90ad8feb80",
-		"vout": 0,
+		"outputIndex": 0,
 		"script": "76a914759d6677091e973b9e9d99f19c68fbf43e3f05f988ac",
 		"satoshis": 10000
 	}
@@ -426,12 +431,11 @@ function getUTXOsFromSignedTx(tx) {
 			if (!output.satoshis) {
 				return null;
 			}
-			const outputPlainObject = output.toObject();// To get script as string.
 			return {
 				address: output.script.toAddress().toString(),
 				txid: tx.hash,
-				vout: outputIndex,
-				script: outputPlainObject.script,
+				outputIndex,
+				script: output.script.toHex(),
 				satoshis: output.satoshis
 			};
 		})
