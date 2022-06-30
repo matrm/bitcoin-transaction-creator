@@ -84,6 +84,21 @@ function assert(b) {
 	}
 }
 
+function sleep_ms(ms) {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Returns an array with arrays of the given size.
+function chunkArray(array, chunkSize) {
+	const results = [];
+
+	while (array.length) {
+		results.push(array.splice(0, chunkSize));
+	}
+
+	return results;
+}
+
 function splitStringFromNewLineAndComma(text) {
 	return text
 		// Convert commas to new lines.
@@ -110,6 +125,81 @@ function compareObjectReturnDifferencesFromSecondObject(obj1, obj2) {
 	}
 	return differences;
 }
+
+class StringCache {
+	constructor(limit=50, valueLengthLimit=10000) {
+		assert(limit > 0);
+		assert(valueLengthLimit > 0);
+		this.limit = limit;
+		this.valueLengthLimit = valueLengthLimit;
+		this._strings = {};
+		this._keys = [];
+	}
+
+	add(key, value) {
+		if (value.length > this.valueLengthLimit) {
+			return;
+		}
+		assert(!(key in this._strings));
+		this._strings[key] = value;
+		this._keys.push(key);
+		assert(this.limit > 0);
+		while (this._keys.length > this.limit) {
+			delete this._strings[this._keys.shift()];
+		}
+	}
+
+	get(key) {
+		// If this._keys is ever changed into a linked list it can be moved to the end here to prevent getting removed soon.
+		return this._strings[key];
+	}
+}
+
+const DEFAULT_TIME_BETWEEN_RATE_LIMITED_FETCH_ms = 500;
+
+const key_hostname_value_timeBetween_ms = {};
+const key_hostname_value_nextPossibleFetchTime_ms = {};
+
+function getHostnameFromURL(url) {
+	// https://stackoverflow.com/a/54947757
+	const matches = url.match(/^https?\:\/\/([^\/?#]+)(?:[\/?#]|$)/i);
+	// extract hostname (will be null if no match is found)
+	return matches && matches[1];
+}
+
+function addHostnameTimeBetween(hostname, timeBetween_ms) {
+	assert(hostname);
+	assert(timeBetween_ms >= 0);
+	key_hostname_value_timeBetween_ms[hostname] = timeBetween_ms;
+	key_hostname_value_nextPossibleFetchTime_ms[hostname] = key_hostname_value_nextPossibleFetchTime_ms[hostname] || Date.now();
+}
+
+async function fetchRateLimited(url, ...args) {
+	const hostname = getHostnameFromURL(url);
+	if (!(hostname in key_hostname_value_nextPossibleFetchTime_ms)) {
+		addHostnameTimeBetween(hostname, DEFAULT_TIME_BETWEEN_RATE_LIMITED_FETCH_ms);
+		console.log(`Automatically added default rate limit of ${DEFAULT_TIME_BETWEEN_RATE_LIMITED_FETCH_ms}ms for fetch()ing from host name "${hostname}".`);
+	}
+	const timeAvailableValue = key_hostname_value_nextPossibleFetchTime_ms[hostname];
+	assert(Number.isFinite(timeAvailableValue));
+	const now = Date.now();
+	const timeAvailable = Math.max(timeAvailableValue, now);
+	const timeDifference = timeAvailable - now;
+	assert(timeDifference >= 0);
+	assert(hostname in key_hostname_value_timeBetween_ms);
+	const timeToAdd = key_hostname_value_timeBetween_ms[hostname];
+	assert(Number.isFinite(timeToAdd));
+	assert(timeAvailable >= now);
+	key_hostname_value_nextPossibleFetchTime_ms[hostname] = timeAvailable + timeToAdd;
+	if (timeDifference > 0) {
+		console.log(`Sleeping ${timeDifference}ms to avoid getting rate limited from ${hostname}.`);
+		await sleep_ms(timeDifference);
+	}
+	const response = await fetch(url, ...args);
+	return response;
+}
+
+addHostnameTimeBetween('api.whatsonchain.com', 500);
 
 async function checkIfConnectedToInternet() {
 	const urls = [
@@ -303,35 +393,147 @@ function checkAndFormatPlainUTXOs(utxos) {
 	return utxos.map(checkAndFormatPlainUTXO);
 }
 
+const transactionCache = new StringCache(50, 10000);// Prevent unnecessarily downloading transactions multiple times.
+async function fetchTransaction(txid) {
+	const cachedTransaction = transactionCache.get(txid);
+	if (cachedTransaction) {
+		return cachedTransaction;
+	}
+
+	// https://developers.whatsonchain.com/#get-raw-transaction-data
+	const url = `https://api.whatsonchain.com/v1/bsv/main/tx/${txid}/hex`;
+	const response = await fetchRateLimited(url);
+	if (!response.ok) {
+		console.log(response);
+		throw new Error(`Request for transaction download rejected with status ${response.status}`);
+	}
+
+	const txSerialized = await response.text();
+	transactionCache.add(txid, txSerialized);
+	return txSerialized;
+}
+
 async function fetchAddressesUTXOs(addresses) {
 	assert(Array.isArray(addresses));
 	assert(addresses.length);
 	assert(typeof addresses[0] == 'string');
-	assert(addresses.length == [...new Set(addresses)].length);// Check for duplicate addresses.
-	const url = `https://api.bitindex.network/api/v3/main/addr/${addresses.join(',')}/utxo`;
-	const response = await fetch(url);
-	if (!response.ok) {
-		console.log(response);
-		throw new Error(`Request for addresses UTXOs rejected with status ${response.status}`);
-	}
-	const bloatedUTXOs = await response.json();
-	if (!Array.isArray(bloatedUTXOs)) {
-		throw new Error(`Request for UTXOs expected an array but got a ${typeof bloatedUTXOs}`);
+
+	const addressesSet = new Set(addresses);
+	assert(addresses.length == addressesSet.size);// Check for duplicate addresses.
+
+	// Prevent requesting info on too many addresses at once.
+	// Array of arrays of addresses.
+	const chunksOfAddresses = chunkArray([...addresses], 20);
+
+	const url = 'https://api.whatsonchain.com/v1/bsv/main/addresses/unspent';
+
+	const responseJSONs = [];
+	for (const chunkOfAddresses of chunksOfAddresses) {
+
+		const response = await fetchRateLimited(url, {
+			method: 'POST',
+			cache: 'no-cache',
+			headers: {
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({
+				addresses: chunkOfAddresses
+			}),
+		});
+
+		if (!response.ok) {
+			throw new Error(`Request for address info rejected with status ${response.status}`);
+		}
+
+		const responseJSON = await response.json();
+
+		if (!Array.isArray(responseJSON)) {
+			console.error(`Error: Expected an array but received ${typeof responseJSON}.`);
+			throw new Error('Invalid data type received');
+		}
+
+		responseJSONs.push(...responseJSON);
+	};
+
+	/* responseJSONs example:
+	[
+		{
+			"address": "16ZBEb7pp6mx5EAGrdeKivztd5eRJFuvYP",
+			"unspent": [
+				{
+					"height": 657540,
+					"tx_pos": 1,
+					"tx_hash": "d75485c2329a533fd06b5f55a3f21644741c0258f2974d5d989e946a0bb4357f",
+					"value": 25000000
+				},
+				{
+					"height": 657542,
+					"tx_pos": 1,
+					"tx_hash": "55a656d50327ec3237fa6e821ab62294695cfd508d631dc9b04dc3a395cf0a37",
+					"value": 25000000
+				}
+			],
+			"error": ""
+		},
+		{
+			"address": "1KGHhLTQaPr4LErrvbAuGE62yPpDoRwrob",
+			"unspent": [
+				{
+					"height": 658133,
+					"tx_pos": 1,
+					"tx_hash": "7ae43aac97396bc99616d8273c6cd9b57f017d6d49aca742fbc8c214fee49fa7",
+					"value": 25000000
+				},
+				{
+					"height": 658134,
+					"tx_pos": 1,
+					"tx_hash": "5b25a56bbb959f9cf4b3e48dbbe412bf5cc85e655d27f87c3bfb07aa6aa01518",
+					"value": 25000000
+				}
+			],
+			"error": ""
+		}
+	]
+	*/
+
+	const txidSet = new Set();
+	responseJSONs.forEach(obj => {
+		const address = obj.address;
+		const errorString = obj.error;
+
+		if (errorString.length) {
+			throw new Error(`Error with address "${address}": "${errorString}"`);
+		}
+
+		obj.unspent.forEach(unspentObj => {
+			const txid = unspentObj.tx_hash;
+			if (typeof txid != 'string' || !txid.length) {
+				throw new Error(`Error with txid for address "${address}": "${txid}" is not a string or is an empty string`);
+			}
+			txidSet.add(txid);
+		});
+	});
+
+	const transactions = [];
+	{
+		const transactionStringsObject = {};
+		for (const txid of txidSet) {
+			transactionStringsObject[txid] = await fetchTransaction(txid);
+		}
+		txidSet.forEach(txid => {
+			transactions.push(stringToTransaction(transactionStringsObject[txid]));
+			delete transactionStringsObject[txid];// Allow release of the transaction string to prevent unnecessary storing of string and Transaction object.
+		});
 	}
 
-	// Returning bloatedUTXOs should work here but the UI will display useless properties from the API in an unreliable order.
-	// Check for errors -> format -> convert UTXOs from plain obj to string -> remove duplicates -> sort -> convert UTXOs from string to plain obj.
-	let minimalUTXOs = checkAndFormatPlainUTXOs(bloatedUTXOs)
-		// Convert to array of strings so duplicates can be removed and the array can be sorted.
-		.map(utxo => JSON.stringify(utxo));
-	// Remove duplicates while it is a string and before sorting.
-	minimalUTXOs = [...new Set(minimalUTXOs)]
+	let utxos = getUTXOsFromSignedTxsAndAddressesSet(transactions, addressesSet);
+
+	// Convert UTXOs from plain obj to string -> sort -> convert UTXOs from string to plain obj.
+	utxos = utxos.map(utxo => JSON.stringify(utxo))
 		.sort()
 		.map(utxoString => JSON.parse(utxoString));
 
-	assert(minimalUTXOs.length == bloatedUTXOs.length);
-
-	return minimalUTXOs;
+	return utxos;
 }
 
 function createUnsignedTransaction(settings) {
