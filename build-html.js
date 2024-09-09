@@ -21,7 +21,7 @@ const bsvLibVersion = '1.5.6';
 // This hash will need to be updated after changing bsvLibVersion.
 const bsvLibExpectedHash = '3cf8ca3dec33161c8515f50e6135472b152aed677ec4ac176b4c82dae95db4d3';
 // This hash will need to be updated when making changes to any parts of the HTML.
-const htmlExpectedHash = '8c558a48f4394f870f050845e0ccdcfe17de0a34206240aa4679b675fb80e4a2';
+const htmlExpectedHash = 'b5e5310da37d6807b5568d7548f6167caa21df0b3ba571233ac5fdcab5591d1a';
 
 const libSaveFolder = 'lib';
 // Create lib save folder if it doesn't exist yet.
@@ -55,7 +55,6 @@ async function start() {
 
 	if (!fs.existsSync(bsvLibFilePath)) {
 		// File doesn't exist. Download first.
-		const fetch = require('node-fetch');
 		const url = `https://unpkg.com/bsv@${bsvLibVersion}/bsv.min.js`;
 		console.log(`BSV library not downloaded yet. Downloading from "${url}".`);
 		const response = await fetch(url);
@@ -66,7 +65,7 @@ async function start() {
 		if (response.redirected) {
 			throw new Error(`Unable to fetch "${url}": Response redirected.`);
 		}
-		const buffer = await response.buffer();
+		const buffer = Buffer.from(await response.arrayBuffer());
 		try {
 			verifyHash(sha256(buffer), bsvLibExpectedHash, 'Downloaded BSV library unexpected hash.');
 		} catch (error) {

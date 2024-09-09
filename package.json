@@ -7,9 +7,6 @@
   },
   "author": "matrm <matrm@gmx.com>",
   "license": "Open BSV",
-  "dependencies": {
-    "node-fetch": "^2.6.1"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/matrm/bitcoin-transaction-creator.git"

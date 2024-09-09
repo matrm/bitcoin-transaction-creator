@@ -316,9 +316,12 @@ function checkAndFormatPlainUTXOs(utxos) {
 	return utxos.map(checkAndFormatPlainUTXO);
 }
 
-const transactionCache = new StringCache(50, 10000);// Prevent unnecessarily downloading transactions multiple times.
-async function fetchTransaction(txid) {
-	const cachedTransaction = transactionCache.get(txid);
+const transactionHexCache = new StringCache(50, 10000);// Prevent unnecessarily downloading transactions multiple times.
+async function fetchTransactionHex(txid) {
+	assert(typeof txid == 'string');
+	assert(txid.length);
+
+	const cachedTransaction = transactionHexCache.get(txid);
 	if (cachedTransaction) {
 		return cachedTransaction;
 	}
@@ -331,12 +334,12 @@ async function fetchTransaction(txid) {
 		throw new Error(`Request for transaction download rejected with status ${response.status}`);
 	}
 
-	const txSerialized = await response.text();
-	transactionCache.add(txid, txSerialized);
-	return txSerialized;
+	const transactionHex = await response.text();
+	transactionHexCache.add(txid, transactionHex);
+	return transactionHex;
 }
 
-async function fetchAddressesUTXOs(addresses) {
+async function fetchAddressesUTXOsMapWithoutScript(addresses) {
 	assert(Array.isArray(addresses));
 	assert(addresses.length);
 	assert(typeof addresses[0] == 'string');
@@ -348,11 +351,10 @@ async function fetchAddressesUTXOs(addresses) {
 	// Array of arrays of addresses.
 	const chunksOfAddresses = chunkArray([...addresses], 20);
 
-	const url = 'https://api.whatsonchain.com/v1/bsv/main/addresses/unspent';
+	const url = 'https://api.whatsonchain.com/v1/bsv/main/addresses/confirmed/unspent';
 
-	const responseJSONs = [];
+	const addressUnspentTransactionInfos = [];
 	for (const chunkOfAddresses of chunksOfAddresses) {
-
 		const response = await fetchRateLimited(url, {
 			method: 'POST',
 			cache: 'no-cache',
@@ -375,81 +377,83 @@ async function fetchAddressesUTXOs(addresses) {
 			throw new Error('Invalid data type received');
 		}
 
-		responseJSONs.push(...responseJSON);
+		addressUnspentTransactionInfos.push(...responseJSON);
 	};
 
-	/* responseJSONs example:
-	[
-		{
-			"address": "16ZBEb7pp6mx5EAGrdeKivztd5eRJFuvYP",
-			"unspent": [
-				{
-					"height": 657540,
-					"tx_pos": 1,
-					"tx_hash": "d75485c2329a533fd06b5f55a3f21644741c0258f2974d5d989e946a0bb4357f",
-					"value": 25000000
-				},
-				{
-					"height": 657542,
-					"tx_pos": 1,
-					"tx_hash": "55a656d50327ec3237fa6e821ab62294695cfd508d631dc9b04dc3a395cf0a37",
-					"value": 25000000
-				}
-			],
-			"error": ""
-		},
-		{
-			"address": "1KGHhLTQaPr4LErrvbAuGE62yPpDoRwrob",
-			"unspent": [
-				{
-					"height": 658133,
-					"tx_pos": 1,
-					"tx_hash": "7ae43aac97396bc99616d8273c6cd9b57f017d6d49aca742fbc8c214fee49fa7",
-					"value": 25000000
-				},
-				{
-					"height": 658134,
-					"tx_pos": 1,
-					"tx_hash": "5b25a56bbb959f9cf4b3e48dbbe412bf5cc85e655d27f87c3bfb07aa6aa01518",
-					"value": 25000000
-				}
-			],
-			"error": ""
-		}
-	]
-	*/
+	const addressesUTXOsMapWithoutScript = new Map();
+	for (const address of addresses) {
+		addressesUTXOsMapWithoutScript.set(address, []);
+	}
 
-	const txidSet = new Set();
-	responseJSONs.forEach(obj => {
-		const address = obj.address;
-		const errorString = obj.error;
-
+	addressUnspentTransactionInfos.forEach(addressUnspentTransactionInfo => {
+		const address = addressUnspentTransactionInfo.address;
+		const errorString = addressUnspentTransactionInfo.error;
 		if (errorString.length) {
 			throw new Error(`Error with address "${address}": "${errorString}"`);
 		}
+		if (typeof address != 'string' || !address.length) {
+			throw new Error(`Address "${address}" is not a string or is an empty string`);
+		}
 
-		obj.unspent.forEach(unspentObj => {
+		addressUnspentTransactionInfo.result.forEach(unspentObj => {
 			const txid = unspentObj.tx_hash;
 			if (typeof txid != 'string' || !txid.length) {
 				throw new Error(`Error with txid for address "${address}": "${txid}" is not a string or is an empty string`);
 			}
-			txidSet.add(txid);
+			const outputIndex = unspentObj.tx_pos;
+			if (!Number.isSafeInteger(outputIndex) || outputIndex < 0) {
+				throw new Error(`Error with outputIndex for address "${address}": "${outputIndex}" is not a number or is negative`);
+			}
+			const satoshis = unspentObj.value;
+			if (!Number.isSafeInteger(satoshis) || satoshis < 0) {
+				throw new Error(`Error with value for address "${address}": "${satoshis}" is not a number or is negative`);
+			}
+
+			addressesUTXOsMapWithoutScript.get(address).push({
+				address,
+				txid,
+				outputIndex,
+				satoshis
+			});
 		});
 	});
 
-	const transactions = [];
-	{
-		const transactionStringsObject = {};
-		for (const txid of txidSet) {
-			transactionStringsObject[txid] = await fetchTransaction(txid);
+	return addressesUTXOsMapWithoutScript;
+}
+
+async function fetchAddressesUTXOs(addresses) {
+	assert(Array.isArray(addresses));
+	assert(addresses.length);
+	assert(typeof addresses[0] == 'string');
+
+	const addressesUTXOsMapWithoutScript = await fetchAddressesUTXOsMapWithoutScript(addresses);
+	let txids = [];
+	for (const [address, utxosWithoutScript] of addressesUTXOsMapWithoutScript) {
+		for (const utxoWithoutScript of utxosWithoutScript) {
+			txids.push(utxoWithoutScript.txid);
 		}
-		txidSet.forEach(txid => {
-			transactions.push(stringToTransaction(transactionStringsObject[txid]));
-			delete transactionStringsObject[txid];// Allow release of the transaction string to prevent unnecessary storing of string and Transaction object.
-		});
+	}
+	txids = [...new Set(txids)];
+
+	const transactionsMap = new Map();
+	{
+		for (const txid of txids) {
+			transactionsMap.set(txid, stringToTransaction(await fetchTransactionHex(txid)));
+		}
 	}
 
-	let utxos = getUTXOsFromSignedTxsAndAddressesSet(transactions, addressesSet);
+	let utxos = [];
+	for (const [address, utxosWithoutScript] of addressesUTXOsMapWithoutScript) {
+		for (const utxoWithoutScript of utxosWithoutScript) {
+			const { txid, outputIndex, satoshis } = utxoWithoutScript;
+			assert(address === utxoWithoutScript.address);
+			const script = transactionsMap.get(txid).outputs.at(outputIndex).script.toHex();
+			assert(typeof script == 'string');
+			assert(script.length);
+			utxos.push({ address, txid, outputIndex, script, satoshis });
+		}
+	}
+	checkAndFormatPlainUTXOs(utxos);
 
 	// Convert UTXOs from plain obj to string -> sort -> convert UTXOs from string to plain obj.
 	utxos = utxos.map(utxo => JSON.stringify(utxo))
@@ -541,7 +545,7 @@ function txIsSigned(tx) {
 	}
 ]
 */
-function getUTXOsFromSignedTx(tx) {
+function getSignedTxOutputsAsUTXOs(tx) {
 	assert(tx instanceof bsv.Transaction);
 	assert(txIsSigned(tx));// Only accepts signed transactions because txid changes after signing.
 	assert(Array.isArray(tx.outputs));
@@ -578,7 +582,7 @@ function getUTXOsFromSignedTxAndAddressesSet(tx, addresses) {
 	assert(tx instanceof bsv.Transaction);
 	assert(addresses instanceof Set);
 	assert(Array.isArray(tx.outputs));
-	return getUTXOsFromSignedTx(tx).filter(utxo => addresses.has(utxo.address));
+	return getSignedTxOutputsAsUTXOs(tx).filter(utxo => addresses.has(utxo.address));
 }
 
 // Returns txs UTXOs that are spent to an address in the addresses Set.
